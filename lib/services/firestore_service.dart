@@ -28,10 +28,53 @@ class FirestoreService {
             snapshot.docs.map((doc) => Group.fromMap(doc.data() as Map<String, dynamic>)).toList());
   }
 
+  Stream<Group> getGroupStream(String groupId) {
+    return _db.collection('groups').doc(groupId).snapshots().map((doc) => Group.fromMap(doc.data() as Map<String, dynamic>));
+  }
+
   Future<void> addMemberToGroup(String groupId, String userId) async {
     await _db.collection('groups').doc(groupId).update({
       'memberIds': FieldValue.arrayUnion([userId])
     });
+  }
+
+  Future<void> removeMemberFromGroup(String groupId, String userId) async {
+    await _db.collection('groups').doc(groupId).update({
+      'memberIds': FieldValue.arrayRemove([userId])
+    });
+  }
+
+  Future<void> promoteToAdmin(String groupId, String newAdminId) async {
+    await _db.collection('groups').doc(groupId).update({
+      'adminId': newAdminId
+    });
+  }
+
+  Future<void> deleteGroup(String groupId) async {
+    // Note: In production, you might want to use a Cloud Function to delete subcollections
+    // or manually delete all transactions first.
+    final txs = await _db.collection('groups').doc(groupId).collection('transactions').get();
+    for (var doc in txs.docs) {
+      await doc.reference.delete();
+    }
+    await _db.collection('groups').doc(groupId).delete();
+  }
+
+  Future<bool> isMemberInvolvedInTransactions(String groupId, String userId) async {
+    final queryPayer = await _db.collection('groups').doc(groupId).collection('transactions')
+        .where('payerId', isEqualTo: userId).limit(1).get();
+    if (queryPayer.docs.isNotEmpty) return true;
+
+    // For splitDetails, we have to fetch and check locally as Firestore doesn't support complex map key queries well
+    final allTxs = await _db.collection('groups').doc(groupId).collection('transactions').get();
+    for (var doc in allTxs.docs) {
+      final data = doc.data();
+      final splitDetails = data['splitDetails'] as Map?;
+      if (splitDetails != null && splitDetails.containsKey(userId)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   // User Operations
@@ -54,6 +97,12 @@ class FirestoreService {
     });
   }
 
+  Future<void> removeFriend(String currentUserId, String friendUserId) async {
+    await _db.collection('users').doc(currentUserId).update({
+      'friendIds': FieldValue.arrayRemove([friendUserId])
+    });
+  }
+
   Stream<AppUser> getUserStream(String uid) {
     return _db.collection('users').doc(uid).snapshots().map((doc) => AppUser.fromMap(doc.data() as Map<String, dynamic>));
   }
@@ -61,7 +110,6 @@ class FirestoreService {
   Future<List<AppUser>> getFriendsDetails(List<String> friendIds) async {
     if (friendIds.isEmpty) return [];
     
-    // Firestore 'in' query supports up to 30 values
     QuerySnapshot snapshot = await _db
         .collection('users')
         .where('uid', whereIn: friendIds)
@@ -95,6 +143,24 @@ class FirestoreService {
         .set(transaction.toMap());
   }
 
+  Future<void> updateTransaction(TransactionModel transaction) async {
+    await _db
+        .collection('groups')
+        .doc(transaction.groupId)
+        .collection('transactions')
+        .doc(transaction.id)
+        .set(transaction.toMap(), SetOptions(merge: true));
+  }
+
+  Future<void> deleteTransaction(String groupId, String transactionId) async {
+    await _db
+        .collection('groups')
+        .doc(groupId)
+        .collection('transactions')
+        .doc(transactionId)
+        .delete();
+  }
+
   Stream<List<TransactionModel>> getTransactions(String groupId) {
     return _db
         .collection('groups')
@@ -107,7 +173,26 @@ class FirestoreService {
             .toList());
   }
 
-  // Debt Analysis
+  // Real-time Debt Analysis
+  Stream<Map<String, double>> streamBalances(String groupId) {
+    return _db
+        .collection('groups')
+        .doc(groupId)
+        .collection('transactions')
+        .snapshots()
+        .map((snapshot) {
+      Map<String, double> balances = {};
+      for (var doc in snapshot.docs) {
+        TransactionModel tx = TransactionModel.fromMap(doc.data() as Map<String, dynamic>);
+        balances[tx.payerId] = (balances[tx.payerId] ?? 0.0) + tx.amount;
+        tx.splitDetails.forEach((userId, share) {
+          balances[userId] = (balances[userId] ?? 0.0) - share;
+        });
+      }
+      return balances;
+    });
+  }
+
   Future<Map<String, double>> calculateBalances(String groupId) async {
     QuerySnapshot snapshot = await _db
         .collection('groups')
