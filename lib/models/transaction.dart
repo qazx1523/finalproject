@@ -7,6 +7,7 @@ class TransactionModel {
   final Map<String, double> splitDetails; // userId: amount
   final DateTime date;
   final String category;
+  final bool isSettled;
 
   TransactionModel({
     required this.id,
@@ -17,6 +18,7 @@ class TransactionModel {
     required this.splitDetails,
     required this.date,
     required this.category,
+    this.isSettled = false,
   });
 
   Map<String, dynamic> toMap() {
@@ -29,6 +31,7 @@ class TransactionModel {
       'splitDetails': splitDetails,
       'date': date.toIso8601String(),
       'category': category,
+      'isSettled': isSettled,
     };
   }
 
@@ -42,6 +45,7 @@ class TransactionModel {
       splitDetails: Map<String, double>.from(map['splitDetails'] ?? {}),
       date: DateTime.parse(map['date']),
       category: map['category'] ?? 'General',
+      isSettled: map['isSettled'] ?? false,
     );
   }
 }

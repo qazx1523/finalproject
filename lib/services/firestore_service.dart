@@ -51,8 +51,6 @@ class FirestoreService {
   }
 
   Future<void> deleteGroup(String groupId) async {
-    // Note: In production, you might want to use a Cloud Function to delete subcollections
-    // or manually delete all transactions first.
     final txs = await _db.collection('groups').doc(groupId).collection('transactions').get();
     for (var doc in txs.docs) {
       await doc.reference.delete();
@@ -61,14 +59,23 @@ class FirestoreService {
   }
 
   Future<bool> isMemberInvolvedInTransactions(String groupId, String userId) async {
-    final queryPayer = await _db.collection('groups').doc(groupId).collection('transactions')
-        .where('payerId', isEqualTo: userId).limit(1).get();
-    if (queryPayer.docs.isNotEmpty) return true;
-
-    // For splitDetails, we have to fetch and check locally as Firestore doesn't support complex map key queries well
-    final allTxs = await _db.collection('groups').doc(groupId).collection('transactions').get();
-    for (var doc in allTxs.docs) {
+    // A member can be removed if they are not part of any "Current" (unsettled) transaction.
+    // Settlement effectively archives their involvement, allowing them to leave the group
+    // without affecting the active balance of others.
+    
+    // We query for any transaction in the group where isSettled is NOT true
+    // (handles false and legacy null values)
+    final snapshot = await _db.collection('groups').doc(groupId).collection('transactions').get();
+    
+    for (var doc in snapshot.docs) {
       final data = doc.data();
+      // Only care about UNSETTLED transactions
+      if (data['isSettled'] == true) continue;
+
+      // Check if user is the payer
+      if (data['payerId'] == userId) return true;
+      
+      // Check if user is in splitDetails
       final splitDetails = data['splitDetails'] as Map?;
       if (splitDetails != null && splitDetails.containsKey(userId)) {
         return true;
@@ -78,6 +85,12 @@ class FirestoreService {
   }
 
   // User Operations
+  Future<void> updateUserName(String uid, String newName) async {
+    await _db.collection('users').doc(uid).update({
+      'displayName': newName,
+    });
+  }
+
   Future<AppUser?> searchUserByEmail(String email) async {
     QuerySnapshot snapshot = await _db
         .collection('users')
@@ -161,14 +174,37 @@ class FirestoreService {
         .delete();
   }
 
-  Stream<List<TransactionModel>> getTransactions(String groupId) {
-    return _db
+  Future<void> settleAllTransactions(String groupId) async {
+    // Settle all transactions that are not already settled.
+    final snapshot = await _db
         .collection('groups')
         .doc(groupId)
         .collection('transactions')
-        .orderBy('date', descending: true)
-        .snapshots()
-        .map((snapshot) => snapshot.docs
+        .get();
+    
+    WriteBatch batch = _db.batch();
+    bool hasUpdates = false;
+    for (var doc in snapshot.docs) {
+      if (doc.data()['isSettled'] != true) {
+        batch.update(doc.reference, {'isSettled': true});
+        hasUpdates = true;
+      }
+    }
+    if (hasUpdates) await batch.commit();
+  }
+
+  Stream<List<TransactionModel>> getTransactions(String groupId, {bool? isSettled}) {
+    // Query optimization: filter then order. 
+    // Note: Requires a composite index in Firestore for (isSettled, date).
+    Query query = _db.collection('groups').doc(groupId).collection('transactions');
+    
+    if (isSettled != null) {
+      query = query.where('isSettled', isEqualTo: isSettled);
+    }
+    
+    query = query.orderBy('date', descending: true);
+
+    return query.snapshots().map((snapshot) => snapshot.docs
             .map((doc) => TransactionModel.fromMap(doc.data() as Map<String, dynamic>))
             .toList());
   }
@@ -183,7 +219,10 @@ class FirestoreService {
         .map((snapshot) {
       Map<String, double> balances = {};
       for (var doc in snapshot.docs) {
-        TransactionModel tx = TransactionModel.fromMap(doc.data() as Map<String, dynamic>);
+        final data = doc.data();
+        if (data['isSettled'] == true) continue;
+        
+        TransactionModel tx = TransactionModel.fromMap(data);
         balances[tx.payerId] = (balances[tx.payerId] ?? 0.0) + tx.amount;
         tx.splitDetails.forEach((userId, share) {
           balances[userId] = (balances[userId] ?? 0.0) - share;
@@ -194,7 +233,7 @@ class FirestoreService {
   }
 
   Future<Map<String, double>> calculateBalances(String groupId) async {
-    QuerySnapshot snapshot = await _db
+    final snapshot = await _db
         .collection('groups')
         .doc(groupId)
         .collection('transactions')
@@ -203,8 +242,10 @@ class FirestoreService {
     Map<String, double> balances = {}; 
 
     for (var doc in snapshot.docs) {
-      TransactionModel tx = TransactionModel.fromMap(doc.data() as Map<String, dynamic>);
+      final data = doc.data();
+      if (data['isSettled'] == true) continue;
       
+      TransactionModel tx = TransactionModel.fromMap(data);
       balances[tx.payerId] = (balances[tx.payerId] ?? 0.0) + tx.amount;
 
       tx.splitDetails.forEach((userId, share) {

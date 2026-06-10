@@ -1,18 +1,3 @@
-/*新增個人檔案功能:
-1.功能列中新增個人檔案
-2.用戶可更改名稱，用戶在更改名稱後立即更新用戶資料
-3.在程式上方顯示當前用戶名稱
-修改支出功能:
-1.新增"當前"、"歷史"分類
-2.新增一筆支出項目後，該項目會被歸類在"當前"
-3."歷史"分類中的支出項目將無法被修改
-修改結算功能:
-1.結算功能名稱修改成"統計"
-2.管理員的統計畫面新增"結算"按鈕
-3.結算按鈕被按下後彈出確認畫面，確認是否都有還款
-4.確認還款後，將統計畫面清空，並將"當前"所有的支出項目移至"歷史"/
-*/
-
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
@@ -23,7 +8,6 @@ import 'services/firestore_service.dart';
 import 'models/group.dart';
 import 'models/transaction.dart';
 import 'models/app_user.dart';
-import 'package:intl/intl.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,15 +56,9 @@ class AuthenticationWrapper extends StatelessWidget {
   }
 }
 
-class LoginScreen extends StatefulWidget {
+class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
-  @override
-  State<LoginScreen> createState() => _LoginScreenState();
-}
 
-class _LoginScreenState extends State<LoginScreen> {
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -91,57 +69,26 @@ class _LoginScreenState extends State<LoginScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Text('多人分帳 APP', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 40),
-              TextField(controller: _emailController, decoration: const InputDecoration(labelText: '電子郵件')),
-              TextField(controller: _passwordController, decoration: const InputDecoration(labelText: '密碼'), obscureText: true),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: () => context.read<AuthService>().signIn(_emailController.text, _passwordController.text),
-                style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
-                child: const Text('登入'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterScreen())),
-                child: const Text('前往註冊'),
+              const SizedBox(height: 80),
+              const Icon(Icons.account_balance_wallet, size: 100, color: Colors.teal),
+              const SizedBox(height: 80),
+              ElevatedButton.icon(
+                onPressed: () => context.read<AuthService>().signInWithGoogle(),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50),
+                  backgroundColor: Colors.white,
+                  foregroundColor: Colors.black,
+                  side: const BorderSide(color: Colors.grey),
+                ),
+                icon: Image.network(
+                  'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                  height: 24,
+                  errorBuilder: (context, error, stackTrace) => const Icon(Icons.login),
+                ),
+                label: const Text('使用 Google 帳戶登入'),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
-  @override
-  State<RegisterScreen> createState() => _RegisterScreenState();
-}
-
-class _RegisterScreenState extends State<RegisterScreen> {
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _nameController = TextEditingController();
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('註冊')),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          children: [
-            TextField(controller: _nameController, decoration: const InputDecoration(labelText: '顯示名稱')),
-            TextField(controller: _emailController, decoration: const InputDecoration(labelText: '電子郵件')),
-            TextField(controller: _passwordController, decoration: const InputDecoration(labelText: '密碼'), obscureText: true),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () async {
-                await context.read<AuthService>().signUp(_emailController.text, _passwordController.text, _nameController.text);
-                Navigator.pop(context);
-              },
-              child: const Text('註冊'),
-            ),
-          ],
         ),
       ),
     );
@@ -163,14 +110,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = context.watch<User?>();
     if (user == null) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
-    final List<Widget> _pages = [
+    final List<Widget> pages = [
       const GroupListScreen(),
       const FriendListScreen(),
       const UserProfileScreen(),
     ];
 
     return Scaffold(
-      body: _pages[_currentIndex],
+      body: pages[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
@@ -199,9 +146,6 @@ class GroupListScreen extends StatelessWidget {
         return Scaffold(
           appBar: AppBar(
             title: Text('我的群組 ($displayName)'),
-            actions: [
-              IconButton(icon: const Icon(Icons.logout), onPressed: () => context.read<AuthService>().signOut()),
-            ],
           ),
           body: StreamBuilder<List<Group>>(
             stream: firestore.getGroups(user.uid),
@@ -314,7 +258,7 @@ class FriendListScreen extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               await context.read<FirestoreService>().removeFriend(uid, friendUid);
-              Navigator.pop(context);
+              if (context.mounted) Navigator.pop(context);
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
             child: const Text('刪除'),
@@ -337,12 +281,16 @@ class FriendListScreen extends StatelessWidget {
           ElevatedButton(
             onPressed: () async {
               final friend = await firestore.searchUserByEmail(controller.text);
-              if (friend != null) {
-                await firestore.addFriend(uid, friend.uid);
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已成功加入好友')));
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('找不到該用戶')));
+              if (context.mounted) {
+                if (friend != null) {
+                  await firestore.addFriend(uid, friend.uid);
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已成功加入好友')));
+                  }
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('找不到該用戶')));
+                }
               }
             },
             child: const Text('新增'),
@@ -367,6 +315,7 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   Widget build(BuildContext context) {
     final user = context.watch<User?>();
     final firestore = context.read<FirestoreService>();
+    final auth = context.read<AuthService>();
 
     return StreamBuilder<AppUser>(
       stream: firestore.getUserStream(user!.uid),
@@ -376,7 +325,9 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
         if (_nameController.text.isEmpty) _nameController.text = appUser.displayName;
 
         return Scaffold(
-          appBar: AppBar(title: const Text('個人檔案')),
+          appBar: AppBar(
+            title: Text('個人檔案 (${appUser.displayName})'),
+          ),
           body: Padding(
             padding: const EdgeInsets.all(24.0),
             child: Column(
@@ -385,18 +336,31 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
                 const SizedBox(height: 20),
                 TextField(
                   controller: _nameController,
-                  decoration: const InputDecoration(labelText: '顯示名稱'),
+                  decoration: const InputDecoration(
+                    labelText: '顯示名稱',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-                const SizedBox(height: 20),
-                Text('Email: ${appUser.email}'),
+                const SizedBox(height: 10),
+                Text('登入帳號: ${appUser.email}', style: const TextStyle(color: Colors.grey)),
                 const SizedBox(height: 30),
                 ElevatedButton(
                   onPressed: () async {
                     await firestore.updateUserName(appUser.uid, _nameController.text);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('資料已更新")));
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('資料已更新')));
+                    }
                   },
+                  style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
                   child: const Text('儲存修改'),
                 ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () => auth.signOut(),
+                  icon: const Icon(Icons.logout, color: Colors.red),
+                  label: const Text('登出帳戶', style: TextStyle(color: Colors.red)),
+                ),
+                const SizedBox(height: 20),
               ],
             ),
           ),
@@ -523,8 +487,10 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
           ElevatedButton(
             onPressed: () async {
               await context.read<FirestoreService>().deleteGroup(group.id);
-              Navigator.pop(context); // close dialog
-              Navigator.pop(context); // exit group screen
+              if (context.mounted) {
+                Navigator.pop(context); // close dialog
+                Navigator.pop(context); // exit group screen
+              }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
             child: const Text('確定刪除'),
@@ -561,6 +527,14 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
     return StreamBuilder<List<TransactionModel>>(
       stream: firestore.getTransactions(group.id, isSettled: isSettled),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Text('查詢失敗，請檢查主控台是否需建立索引。\n錯誤：${snapshot.error}'),
+            ),
+          );
+        }
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         final txs = snapshot.data!;
         if (txs.isEmpty) return const Center(child: Text('目前沒有任何帳單'));
@@ -638,8 +612,10 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
           ElevatedButton(
             onPressed: () async {
               await firestore.settleAllTransactions(group.id);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('結算完成')));
+              if (context.mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('結算完成')));
+              }
             },
             child: const Text('確認'),
           ),
@@ -704,7 +680,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
           ElevatedButton(
             onPressed: () async {
               await context.read<FirestoreService>().promoteToAdmin(group.id, uid);
-              Navigator.pop(context);
+              if (context.mounted) Navigator.pop(context);
             },
             child: const Text('確定賦予'),
           ),
@@ -724,14 +700,16 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
           ElevatedButton(
             onPressed: () async {
               bool isInvolved = await context.read<FirestoreService>().isMemberInvolvedInTransactions(group.id, uid);
-              if (isInvolved) {
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('無法移除：$name 尚有相關的支出項目，請先刪除或修改相關帳單。'), backgroundColor: Colors.red),
-                );
-              } else {
-                await context.read<FirestoreService>().removeMemberFromGroup(group.id, uid);
-                Navigator.pop(context);
+              if (context.mounted) {
+                if (isInvolved) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('無法移除：$name 尚有相關的支出項目，請先刪除或修改相關帳單。'), backgroundColor: Colors.red),
+                  );
+                } else {
+                  await context.read<FirestoreService>().removeMemberFromGroup(group.id, uid);
+                  if (context.mounted) Navigator.pop(context);
+                }
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
@@ -783,7 +761,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                             title: Text(f.displayName),
                             onTap: () async {
                               await firestore.addMemberToGroup(group.id, f.uid);
-                              Navigator.pop(context);
+                              if (context.mounted) Navigator.pop(context);
                             },
                           );
                         },
@@ -800,15 +778,17 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
           ElevatedButton(
             onPressed: () async {
               final user = await firestore.searchUserByEmail(emailController.text);
-              if (user != null) {
-                if (group.memberIds.contains(user.uid)) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('該用戶已在群組中')));
+              if (context.mounted) {
+                if (user != null) {
+                  if (group.memberIds.contains(user.uid)) {
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('該用戶已在群組中')));
+                  } else {
+                    await firestore.addMemberToGroup(group.id, user.uid);
+                    if (context.mounted) Navigator.pop(context);
+                  }
                 } else {
-                  await firestore.addMemberToGroup(group.id, user.uid);
-                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('找不到該用戶')));
                 }
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('找不到該用戶')));
               }
             },
             child: const Text('邀請'),
@@ -834,8 +814,8 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
   final _titleController = TextEditingController();
   final _amountController = TextEditingController();
   String _selectedPayerId = '';
-  Map<String, double> _splitAmounts = {};
-  Map<String, bool> _includedMembers = {};
+  final Map<String, double> _splitAmounts = {};
+  final Map<String, bool> _includedMembers = {};
   bool _isEqualSplit = true;
 
   @override
@@ -845,7 +825,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
       _titleController.text = widget.transaction!.title;
       _amountController.text = widget.transaction!.amount.toString();
       _selectedPayerId = widget.transaction!.payerId;
-      _splitAmounts = Map.from(widget.transaction!.splitDetails);
+      _splitAmounts.addAll(widget.transaction!.splitDetails);
       for (var id in widget.group.memberIds) {
         _includedMembers[id] = _splitAmounts[id] != null && _splitAmounts[id]! > 0;
       }
@@ -886,7 +866,7 @@ class _ExpenseFormScreenState extends State<ExpenseFormScreen> {
               icon: const Icon(Icons.delete),
               onPressed: () async {
                 await context.read<FirestoreService>().deleteTransaction(widget.group.id, widget.transaction!.id);
-                Navigator.pop(context);
+                if (mounted) Navigator.pop(context);
               },
             )
         ],
