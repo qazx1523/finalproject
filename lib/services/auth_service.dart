@@ -1,12 +1,19 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/app_user.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final GoogleSignIn _googleSignIn = GoogleSignIn();
+  
+  // 使用使用者提供的正確 Web Client ID
+  static const String _webClientId = '937055748879-2ucjkm5k3q552c2c9pqm5el2gh5g88gt.apps.googleusercontent.com';
+
+  final GoogleSignIn _googleSignIn = GoogleSignIn(
+    clientId: kIsWeb ? _webClientId : null,
+  );
 
   Stream<User?> get userStream => _auth.authStateChanges();
 
@@ -25,7 +32,6 @@ class AuthService {
       User? user = result.user;
 
       if (user != null) {
-        // Check if user exists in Firestore, if not create them
         DocumentSnapshot userDoc = await _db.collection('users').doc(user.uid).get();
         if (!userDoc.exists) {
           AppUser newUser = AppUser(
@@ -45,7 +51,9 @@ class AuthService {
   }
 
   Future<void> signOut() async {
-    await _googleSignIn.signOut();
+    if (kIsWeb) {
+      await _googleSignIn.signOut();
+    }
     await _auth.signOut();
   }
 
